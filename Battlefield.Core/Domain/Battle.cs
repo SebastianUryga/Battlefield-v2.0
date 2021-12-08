@@ -2,6 +2,7 @@
 using Battlefield.Core.Events;
 using Battlefield.Core.Events.Battlefield;
 using Battlefield.Core.Events.BattleUnit;
+using Battlefield.Core.Extensions;
 
 namespace Battlefield.Core.Domain
 {
@@ -21,11 +22,15 @@ namespace Battlefield.Core.Domain
             get { return _units; }
             set { _units = new HashSet<BattleUnit>(value); }
         }
-        public Battle(string name)
+
+        private int _version = 0;
+        
+        // todo: change name to id
+        public Battle(string name, Guid? id = null)
         {
             Name = name;
             Started = false;
-            Id = Guid.NewGuid();
+            Id = id ?? Guid.NewGuid();
             _tileSize = new TileSize(23,14);
             TileMap = new Tile[Height, Width];
             for (int y = 0; y < Height; y++)
@@ -36,13 +41,51 @@ namespace Battlefield.Core.Domain
                 }
             }
         }
+
+        public static Battle Load(Guid id, IEnumerable<IEvent> events)
+        {
+            var battle = new Battle("How to pass name?", id);
+            foreach (var @event in events)
+            {
+                battle.Apply(@event);
+            }
+
+            return battle;
+        }
+        
         public BattleStarted StartBattle()
         {
             if (Started)
-                throw new Exception("Battle is allready started.");
-            Started = true;
-            return new BattleStarted(Id);
+            {
+                throw new Exception("Battle is already started.");
+            }
+            var @event = new BattleStarted(Id, Name);
+            Apply(@event);
+            return @event;
         }
+
+        private void Apply(IEvent @event)
+        {
+            switch(@event)
+            {
+                case BattleStarted battleStarted:
+                    Apply(battleStarted);
+                    break;
+                case UnitCreated unitCreated:
+                    Apply(unitCreated);
+                    break;
+                default: throw new ArgumentException("Unsupported event!");
+            }
+
+            _version++;
+        }
+        
+        private void Apply(BattleStarted @event)
+        {
+            Name = @event.Name;
+            Started = true;
+        }
+        
         public bool ContainsPlayer(Player owner)
         {
             return (owner.Equals(Player.GREEN) ||
@@ -145,11 +188,18 @@ namespace Battlefield.Core.Domain
                 throw new Exception($"Player {owner.ToString()} not found.");
             }
             
-            var unit = new BattleUnit(type, pos, owner);
+            var @event = new UnitCreated(Guid.NewGuid(), Id, pos, type.Name, owner);
+            Apply(@event);
+            return @event;
+        }
+
+        private void Apply(UnitCreated @event)
+        {
+            var unit = new BattleUnit(@event.UnitId, @event.UnitType.ConvertStringToCreature(), @event.Coordinates, @event.Owner);
             AddUnit(unit);
             SetTileMapOnUnitCreating(unit);
-            return new UnitCreated(unit.Id, Id);
         }
+        
         public IEnumerable<IEvent> MakeMoveUnit(BattleUnit unit, Coordinates from, Coordinates to)
         {
             var eventsList = new List<IEvent>();
